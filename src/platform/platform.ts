@@ -15,7 +15,10 @@
 
 export type SupportedPlatform = "windows" | "linux" | "macos";
 
-export function normalizePlatform(platform: NodeJS.Platform): SupportedPlatform {
+export function normalizePlatform(platform: NodeJS.Platform | SupportedPlatform): SupportedPlatform {
+  // Accept already-normalized values (platform selection is centralized here —
+  // callers pass either a Node host string like "win32" or a logical key).
+  if (platform === "windows" || platform === "macos" || platform === "linux") return platform;
   switch (platform) {
     case "win32":
       return "windows";

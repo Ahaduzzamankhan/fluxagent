@@ -164,13 +164,13 @@ test("logger: withBindings injects correlation ids and redacts secret-like bindi
   const records: unknown[] = [];
   const base = new Logger({ component: "test", level: "trace", sink: (r) => records.push(r) });
   base.fatal("fatal works");
-  const bound = base.withBindings({ requestId: "r-1", sessionId: "s-9", apiKey: "sk-123" });
+  const bound = base.withBindings({ requestId: "r-1", traceId: "tr-42", apiKey: "sk-123" });
   bound.info("hello", { toolId: "t-1" });
   const fatal = records[0] as { level: string };
   const info = records[1] as { metadata: Record<string, unknown> };
   assert.equal(fatal.level, "fatal");
   assert.equal(info.metadata["requestId"], "r-1");
-  assert.equal(info.metadata["sessionId"], "s-9");
+  assert.equal(info.metadata["traceId"], "tr-42");
   assert.equal(info.metadata["apiKey"], "[REDACTED]");
   assert.equal(info.metadata["toolId"], "t-1");
 });

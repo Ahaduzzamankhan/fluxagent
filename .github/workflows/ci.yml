@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} — node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Show environment
+        run: |
+          node --version
+          python --version || python3 --version || echo "python: not present (optional)"
+
+      # Zero-dependency project: nothing to install. Typecheck via the
+      # installed TypeScript is not possible without node_modules, so CI runs
+      # the strip-types test suite (the same gate as local `npm test`) plus
+      # tsc when a TypeScript checkout step provides it.
+      - name: Typecheck
+        run: npx -y typescript@5.7 tsc --noEmit
+        continue-on-error: false
+
+      - name: Unit + integration tests
+        run: npm test
+
+      - name: Performance smoke budgets
+        run: npm run perf
+
+      - name: Python stdlib syntax checks
+        if: runner.os != 'Windows'
+        run: |
+          python3 -m py_compile python/worker.py python/vision.py python/ocr.py python/embeddings.py python/documents.py
+
+      - name: Python stdlib syntax checks (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          python -m py_compile python/worker.py python/vision.py python/ocr.py python/embeddings.py python/documents.py
+
+      - name: Doctor smoke (exits non-zero only on FAIL)
+        run: node --experimental-strip-types bin/fluxagent.mjs doctor
+
+  release:
+    name: Release pipeline (tag-gated)
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Verify version matches tag
+        run: node -e "const pkg=require('./package.json'); const tag=process.env.GITHUB_REF.replace('refs/tags/v',''); if(pkg.version!==tag){console.error(`package.json ${pkg.version} != tag ${tag}`);process.exit(1)} else console.log('version ok:', pkg.version)"
+      - name: Run full tests
+        run: npm test
+      # Publishing is intentionally manual (npm publish / gh release) — no
+      # automatic publishes without explicit maintainer action.

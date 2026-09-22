@@ -1,16 +1,48 @@
 {
   "name": "fluxagent",
-  "version": "0.1.0",
-  "description": "Windows-first modular AI agent runtime: planner + tools + controllers + observation + recovery.",
+  "version": "0.2.0",
+  "description": "Cross-platform modular AI agent runtime: planner + tools + controllers + observation + verification + recovery. Windows, Linux, macOS.",
   "type": "module",
   "private": true,
   "license": "MIT",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.6"
+  },
+  "bin": {
+    "fluxagent": "bin/fluxagent.mjs"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test --experimental-strip-types \"tests/**/*.test.ts\"",
+    "doctor": "node --experimental-strip-types bin/fluxagent.mjs doctor",
+    "cli": "node --experimental-strip-types bin/fluxagent.mjs",
+    "perf": "node --experimental-strip-types --test tests/runtime/perf.test.ts",
     "agent": "node --experimental-strip-types src/index.ts"
+  },
+  "files": [
+    "src/",
+    "bin/",
+    "python/",
+    "config/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "agents",
+    "runtime",
+    "tools",
+    "planning",
+    "llm",
+    "automation",
+    "windows",
+    "linux",
+    "macos"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fluxagent/fluxagent"
   }
 }
