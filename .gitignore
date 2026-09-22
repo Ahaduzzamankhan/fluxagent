@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+coverage/
+.fluxagent/
+*.log
+.env
+.env.*
+*.tsbuildinfo
+__pycache__/
+*.pyc
+.venv/

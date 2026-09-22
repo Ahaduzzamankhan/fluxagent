@@ -1,0 +1,41 @@
+{
+  "runtime": {
+    "maxSteps": 60,
+    "stepTimeoutMs": 60000
+  },
+  "planning": {
+    "maxPlanSteps": 25,
+    "allowReplanning": true
+  },
+  "llm": {
+    "provider": "mock",
+    "providerOptions": {}
+  },
+  "security": {
+    "mode": "ask",
+    "ceiling": "PRIVILEGED",
+    "allowedRoots": [],
+    "approvalTimeoutMs": 0
+  },
+  "memory": {
+    "longTermDirectory": ".fluxagent/memory"
+  },
+  "python": {
+    "enabled": false,
+    "interpreter": "python",
+    "workerScript": "python/worker.py",
+    "timeoutMs": 30000
+  },
+  "logging": {
+    "level": "info",
+    "redactKeys": [
+      "apiKey",
+      "api_key",
+      "authorization",
+      "password",
+      "token",
+      "secret",
+      "credential"
+    ]
+  }
+}

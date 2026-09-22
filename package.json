@@ -1,0 +1,16 @@
+{
+  "name": "fluxagent",
+  "version": "0.1.0",
+  "description": "Windows-first modular AI agent runtime: planner + tools + controllers + observation + recovery.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types \"tests/**/*.test.ts\"",
+    "agent": "node --experimental-strip-types src/index.ts"
+  }
+}
