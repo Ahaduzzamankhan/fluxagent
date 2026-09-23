@@ -69,6 +69,26 @@ node --experimental-strip-types src/cli/index.ts tools     # list available tool
 node --experimental-strip-types src/cli/index.ts run "read the file package.json and summarize it"
 ```
 
+### Interactive chat mode
+
+Like Claude Code: set your API key, start a session, type goals. The agent
+uses real tools (files, commands) inside your current directory and asks
+before anything sensitive:
+
+```bash
+export OPENAI_API_KEY=sk-…        # or ANTHROPIC_API_KEY, or OLLAMA_HOST for local models
+node --experimental-strip-types src/cli/index.ts chat
+
+› find the oldest file in this folder and tell me its name
+› fix the syntax error in src/utils/date.ts and run the tests
+```
+
+In-chat commands: `/tools`, `/skills`, `/providers`, `/help`, `/exit`.
+Flags: `--provider openai-compatible|anthropic|local`, `--model`, `--base-url`.
+The key is read from the environment and never printed. Every file write,
+command run, and process start shows a [y/N/a] approval prompt unless you
+allow it.
+
 `run` uses the built-in mock provider by default (deterministic, offline, no key needed). To use a real LLM:
 
 ```ts
@@ -173,6 +193,18 @@ GET  /permissions/:sessionId   grants + audit trail
 - **MCP tools are external code** — they always require confirmation.
 
 ---
+
+## CLI commands
+
+```
+fluxagent chat              Interactive session with your own API key
+fluxagent run "<goal>"      Run one goal (mock provider; deterministic, offline)
+fluxagent doctor [--json]   Health diagnostics
+fluxagent tools             List registered tools
+fluxagent providers         List providers (no secrets)
+fluxagent skills            List skills
+fluxagent version           Version info
+```
 
 ## Development
 

@@ -22,17 +22,29 @@ const FLUX_VERSION = "0.2.0";
 interface ParsedArgs {
   readonly command: string;
   readonly positional: readonly string[];
+  /** Boolean flags (--json) and valued flags (--provider openai → "openai"). */
   readonly flags: ReadonlySet<string>;
+  readonly flagValues: ReadonlyMap<string, string>;
 }
 
 function parseArgs(argv: readonly string[]): ParsedArgs {
   const positional: string[] = [];
   const flags = new Set<string>();
+  const flagValues = new Map<string, string>();
+  /** Flags that take a value argument. */
+  const VALUED = new Set(["provider", "model", "base-url", "config"]);
   let command = "help";
   let first = true;
-  for (const arg of argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
     if (arg.startsWith("--")) {
-      flags.add(arg.slice(2).toLowerCase());
+      const name = arg.slice(2).toLowerCase();
+      if (VALUED.has(name) && i + 1 < argv.length && !argv[i + 1]!.startsWith("--")) {
+        flagValues.set(name, argv[i + 1]!);
+        i++; // consume the value
+      } else {
+        flags.add(name);
+      }
       continue;
     }
     if (first) {
@@ -43,7 +55,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     positional.push(arg);
   }
   if (first) command = argv.includes("help") ? "help" : command;
-  return { command, positional, flags };
+  return { command, positional, flags, flagValues };
 }
 
 function printTools(): void {
@@ -224,6 +236,8 @@ function printHelp(): void {
 Usage: fluxagent <command> [args]
 
 Commands:
+  chat              Interactive agent session with your own API key
+                    (--provider openai-compatible|anthropic|local, --model, --base-url)
   run "<goal>"      Run one goal (mock provider; deterministic, offline)
   doctor [--json]   Health diagnostics (node, config, sandbox, storage, python)
   tools             List registered tools
@@ -253,7 +267,7 @@ function fail(err: unknown): never {
 }
 
 export function main(argv: readonly string[] = process.argv.slice(2)): void {
-  const { command, positional, flags } = parseArgs(argv);
+  const { command, positional, flags, flagValues } = parseArgs(argv);
   switch (command) {
     case "version":
       printVersion();
@@ -297,6 +311,17 @@ export function main(argv: readonly string[] = process.argv.slice(2)): void {
         return;
       }
       runGoal(goal);
+      return;
+    }
+    case "chat": {
+      void (async () => {
+        const { runChat } = await import("./chat.ts");
+        await runChat({
+          providerFlag: flagValues.get("provider"),
+          modelFlag: flagValues.get("model"),
+          baseUrlFlag: flagValues.get("base-url"),
+        });
+      })().catch(fail);
       return;
     }
     case "help":
