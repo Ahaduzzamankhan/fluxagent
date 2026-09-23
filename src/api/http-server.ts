@@ -6,6 +6,10 @@
  *   GET  /api/v1/health
  *   GET  /api/v1/tools
  *   GET  /api/v1/models
+ *   GET  /api/v1/providers           model gateway providers (no key material)
+ *   GET  /api/v1/skills              registered skills + readiness
+ *   GET  /api/v1/memory/semantic     semantic memory stats + search (?q=)
+ *   GET  /api/v1/permissions/:sid    audit trail + active grants for a session
  *   POST /api/v1/agent/run            { goal, sessionId? } → run result
  *   GET  /api/v1/agent/stream?goal=…  SSE stream of live agent events
  *   GET  /api/v1/events               recent recorded events (JSON)
@@ -164,6 +168,66 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
             health: runtime.modelRouter.healthSnapshot(m.id),
             healthy: runtime.modelRouter.isHealthy(m.id),
           })),
+        });
+        return;
+      }
+
+      // ── Phase 10–11 integration endpoints ─────────────────────────────────
+
+      // Providers: identity + capabilities only. NEVER expose API keys —
+      // the runtime holds secrets opaquely and this surface stays key-free.
+      if (req.method === "GET" && path === `/api/${API_VERSION}/providers`) {
+        const providerList = runtime.listProviders();
+        json(res, 200, {
+          version: API_VERSION,
+          providers: providerList.map((p) => ({
+            id: p.id,
+            kind: p.kind,
+            baseUrl: p.baseUrl,
+            hasApiKey: p.hasApiKey,
+            models: p.models,
+          })),
+        });
+        return;
+      }
+
+      if (req.method === "GET" && path === `/api/${API_VERSION}/skills`) {
+        const skills = runtime.listSkills();
+        json(res, 200, {
+          version: API_VERSION,
+          skills: skills.map((s) => ({
+            name: s.name,
+            description: s.description,
+            version: s.version,
+            requiredTools: s.requiredTools,
+            ready: s.ready,
+            missingTools: s.missingTools,
+          })),
+        });
+        return;
+      }
+
+      if (req.method === "GET" && path === `/api/${API_VERSION}/memory/semantic`) {
+        const q = url.searchParams.get("q");
+        const stats = await runtime.semanticMemoryStats();
+        const hits = q ? await runtime.semanticMemorySearch(q, 10) : [];
+        json(res, 200, { version: API_VERSION, stats, results: hits });
+        return;
+      }
+
+      const permMatch = path.match(new RegExp(`^/api/${API_VERSION}/permissions/([^/]+)$`));
+      if (req.method === "GET" && permMatch) {
+        const session = sessions.get(permMatch[1]!);
+        if (!session) {
+          json(res, 404, { error: { code: "E_SESSION_NOT_FOUND", message: `session ${permMatch[1]} not found` } });
+          return;
+        }
+        json(res, 200, {
+          version: API_VERSION,
+          sessionId: permMatch[1]!,
+          ceiling: session.permissions.currentCeiling(),
+          activeGrants: session.permissions.activeGrants(),
+          audit: session.permissions.auditTrail().slice(0, 100),
         });
         return;
       }

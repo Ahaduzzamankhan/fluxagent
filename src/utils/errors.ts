@@ -39,6 +39,23 @@ export type FluxErrorCode =
   | "E_LLM_RESPONSE_INVALID"
   | "E_LLM_RATE_LIMITED"
   | "E_LLM_PROVIDER_ERROR"
+  | "E_LLM_AUTH_FAILED"
+  | "E_LLM_MODEL_NOT_FOUND"
+  | "E_LLM_TIMEOUT"
+  | "E_LLM_NETWORK"
+  | "E_LLM_CONTENT_POLICY"
+  // skills
+  | "E_SKILL_INVALID"
+  | "E_SKILL_NOT_FOUND"
+  // mcp
+  | "E_MCP_PROTOCOL"
+  | "E_MCP_SERVER_ERROR"
+  | "E_MCP_TOOL_FAILED"
+  | "E_MCP_DISCONNECT"
+  | "E_TIMEOUT"
+  // checkpoints / resume
+  | "E_CHECKPOINT_CORRUPT"
+  | "E_CHECKPOINT_INCOMPATIBLE"
   // memory
   | "E_MEMORY_KEY_NOT_FOUND"
   | "E_MEMORY_BACKEND"
@@ -103,7 +120,7 @@ export interface FluxErrorJSON {
 export type ErrorCategory =
   | "configuration" | "model" | "tool" | "permission" | "validation"
   | "network" | "storage" | "plugin" | "task" | "sandbox"
-  | "timeout" | "cancelled" | "platform" | "internal";
+  | "timeout" | "cancelled" | "platform" | "internal" | "integration";
 
 const CATEGORY_BY_CODE: Readonly<Record<FluxErrorCode, ErrorCategory>> = {
   E_VALIDATION: "validation",
@@ -132,6 +149,20 @@ const CATEGORY_BY_CODE: Readonly<Record<FluxErrorCode, ErrorCategory>> = {
   E_LLM_RESPONSE_INVALID: "model",
   E_LLM_RATE_LIMITED: "model",
   E_LLM_PROVIDER_ERROR: "model",
+  E_LLM_AUTH_FAILED: "permission",
+  E_LLM_MODEL_NOT_FOUND: "model",
+  E_LLM_TIMEOUT: "timeout",
+  E_LLM_NETWORK: "network",
+  E_LLM_CONTENT_POLICY: "model",
+  E_SKILL_INVALID: "task",
+  E_SKILL_NOT_FOUND: "task",
+  E_MCP_PROTOCOL: "integration",
+  E_MCP_SERVER_ERROR: "integration",
+  E_MCP_TOOL_FAILED: "tool",
+  E_MCP_DISCONNECT: "network",
+  E_TIMEOUT: "timeout",
+  E_CHECKPOINT_CORRUPT: "storage",
+  E_CHECKPOINT_INCOMPATIBLE: "storage",
   E_MEMORY_KEY_NOT_FOUND: "storage",
   E_MEMORY_BACKEND: "storage",
   E_PYTHON_BRIDGE: "internal",
@@ -155,9 +186,12 @@ const RETRYABLE_CODES: ReadonlySet<FluxErrorCode> = new Set<FluxErrorCode>([
   "E_LLM_UNAVAILABLE",
   "E_LLM_RATE_LIMITED",
   "E_LLM_PROVIDER_ERROR",
+  "E_LLM_TIMEOUT",
+  "E_LLM_NETWORK",
   "E_STEP_TIMEOUT",
   "E_MEMORY_BACKEND",
   "E_PYTHON_BRIDGE",
+  "E_MCP_SERVER_ERROR",
 ]);
 
 /** Whether retrying the same operation could plausibly succeed. */
@@ -300,6 +334,69 @@ export class PlatformUnsupportedError extends FluxError {
 export class PythonBridgeError extends FluxError {
   constructor(message: string, details?: Record<string, unknown>, cause?: unknown) {
     super({ code: "E_PYTHON_BRIDGE", message, details, cause });
+  }
+}
+
+/** Checkpoint JSON is unreadable or structurally invalid. */
+export class CheckpointCorruptError extends FluxError {
+  constructor(checkpointId: string, reason: string) {
+    super({
+      code: "E_CHECKPOINT_CORRUPT",
+      message: `checkpoint "${checkpointId}" is corrupt: ${reason}`,
+      hint: "The checkpoint cannot be resumed. Delete it or restore from another checkpoint.",
+      details: { checkpointId },
+    });
+  }
+}
+
+/** Checkpoint was written by an incompatible schema/runtime version. */
+export class CheckpointIncompatibleError extends FluxError {
+  constructor(checkpointId: string, found: number, expected: number) {
+    super({
+      code: "E_CHECKPOINT_INCOMPATIBLE",
+      message: `checkpoint "${checkpointId}" has schema version ${found}; this runtime supports ${expected}`,
+      hint: "Restore the checkpoint with the runtime version that created it.",
+      details: { checkpointId, found, expected },
+    });
+  }
+}
+
+/** Skill definition failed validation. */
+export class SkillInvalidError extends FluxError {
+  constructor(skillName: string, issues: readonly string[]) {
+    super({
+      code: "E_SKILL_INVALID",
+      message: `invalid skill "${skillName}": ${issues.join("; ")}`,
+      details: { skillName, issues },
+    });
+  }
+}
+
+export class SkillNotFoundError extends FluxError {
+  constructor(skillName: string, available: readonly string[]) {
+    super({
+      code: "E_SKILL_NOT_FOUND",
+      message: `skill not registered: "${skillName}"`,
+      hint: `Available skills: ${available.slice(0, 12).join(", ") || "(none)"}`,
+      details: { skillName },
+    });
+  }
+}
+
+/** MCP protocol/server errors. Server details must never contain secrets. */
+export class McpProtocolError extends FluxError {
+  constructor(serverName: string, message: string, cause?: unknown) {
+    super({ code: "E_MCP_PROTOCOL", message: `MCP server "${serverName}": ${message}`, details: { serverName }, cause });
+  }
+}
+
+export class McpServerError extends FluxError {
+  constructor(serverName: string, code: number, message: string) {
+    super({
+      code: "E_MCP_SERVER_ERROR",
+      message: `MCP server "${serverName}" returned error ${code}: ${message}`,
+      details: { serverName, rpcCode: code },
+    });
   }
 }
 

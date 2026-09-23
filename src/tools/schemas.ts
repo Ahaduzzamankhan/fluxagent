@@ -32,7 +32,8 @@ export function validateAgainstSchema<T = Record<string, unknown>>(
 ): ValidationResult<T> {
   const issues: string[] = [];
   checkValue(schema, value, "$", issues);
-  return { valid: issues.length === 0, value: value as T };
+  if (issues.length === 0) return { valid: true, value: value as T };
+  return { valid: false, issues };
 }
 
 function typeOf(v: unknown): string {

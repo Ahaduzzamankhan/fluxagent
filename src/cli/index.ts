@@ -112,6 +112,100 @@ function runGoal(goal: string): void {
   })().catch(fail);
 }
 
+function printProviders(asJson: boolean): void {
+  void (async () => {
+    const { createRuntime } = await import("../index.ts");
+    const { MockLlmProvider } = await import("../llm/mock-provider.ts");
+    const runtime = createRuntime({ provider: new MockLlmProvider() });
+    const providers = runtime.listProviders();
+    if (asJson) {
+      console.log(JSON.stringify(providers, null, 2));
+      return;
+    }
+    console.log(`${providers.length} provider(s):\n`);
+    for (const p of providers) {
+      console.log(`  ${p.id}  kind=${p.kind}  key=${p.hasApiKey ? "configured" : "none"}  models=[${p.models.join(", ")}]`);
+    }
+    console.log("\nBYOK providers (openai-compatible / anthropic / local) are configured per-environment;");
+    console.log("API keys are read from env vars and never printed.");
+  })().catch(fail);
+}
+
+function printSkills(asJson: boolean): void {
+  void (async () => {
+    const { createRuntime } = await import("../index.ts");
+    const { MockLlmProvider } = await import("../llm/mock-provider.ts");
+    const runtime = createRuntime({ provider: new MockLlmProvider() });
+    const skills = runtime.listSkills();
+    if (asJson) {
+      console.log(JSON.stringify(skills, null, 2));
+      return;
+    }
+    console.log(`${skills.length} skill(s):\n`);
+    for (const s of skills) {
+      const status = s.ready ? "ready" : `missing tools: ${s.missingTools.join(", ")}`;
+      console.log(`  ${s.name.padEnd(18)} v${s.version}  ${status}\n    ${s.description}`);
+    }
+  })().catch(fail);
+}
+
+function printSessions(asJson: boolean): void {
+  void (async () => {
+    // Sessions are per-runtime; the CLI creates an ephemeral runtime, so this
+    // lists persisted checkpoints (resumable sessions) instead.
+    const { JsonFileCheckpointStore } = await import("../runtime/checkpoint.ts");
+    const { loadConfig } = await import("../runtime/config.ts");
+    const config = await loadConfig(path.join(process.cwd(), "config", "default.json"));
+    void config;
+    const store = new JsonFileCheckpointStore(path.join(process.cwd(), ".fluxagent", "checkpoints"));
+    // list() is per-session; without a session id, show the directory contents.
+    const { promises: fs } = await import("node:fs");
+    let ids: string[] = [];
+    try {
+      ids = (await fs.readdir(path.join(process.cwd(), ".fluxagent", "checkpoints")))
+        .filter((f) => f.endsWith(".json"))
+        .map((f) => f.replace(/\.json$/, ""));
+    } catch {
+      ids = [];
+    }
+    if (asJson) {
+      console.log(JSON.stringify({ checkpoints: ids }, null, 2));
+      return;
+    }
+    if (ids.length === 0) {
+      console.log("No saved checkpoints. Runs checkpoint automatically; paused runs appear here.");
+      return;
+    }
+    console.log(`${ids.length} checkpoint(s):\n`);
+    for (const id of ids) console.log(`  ${id}`);
+    console.log("\nResume with: fluxagent resume <checkpoint-id>");
+  })().catch(fail);
+}
+
+function resumeSession(checkpointId: string, asJson: boolean): void {
+  void (async () => {
+    const { JsonFileCheckpointStore } = await import("../runtime/checkpoint.ts");
+    const { SessionPauseResume } = await import("../runtime/resume.ts");
+    const store = new JsonFileCheckpointStore(path.join(process.cwd(), ".fluxagent", "checkpoints"));
+    const svc = new SessionPauseResume({ store });
+    try {
+      const state = await svc.resume(checkpointId);
+      if (asJson) {
+        console.log(JSON.stringify({ resumed: true, checkpointId, goal: state.goal, stepCount: state.stepCount }, null, 2));
+        return;
+      }
+      console.log(`resumed checkpoint ${checkpointId}`);
+      console.log(`  goal:      ${state.goal}`);
+      console.log(`  steps so far: ${state.stepCount}`);
+      console.log("\nNote: permission grants from the original session are NOT restored —");
+      console.log("the runtime re-asks before any sensitive action.");
+    } catch (err) {
+      console.error(`error: ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+    }
+  })().catch(fail);
+}
+
 function printVersion(): void {
   void (async () => {
     const { PLUGIN_API_VERSION } = await import("../plugins/plugin-manager.ts");
@@ -134,6 +228,10 @@ Commands:
   doctor [--json]   Health diagnostics (node, config, sandbox, storage, python)
   tools             List registered tools
   models            List routed model descriptors
+  providers [--json] List model providers (no secrets shown)
+  skills [--json]   List skills and readiness
+  sessions [--json] List saved checkpoints
+  resume <id>       Resume a paused/crashed session from a checkpoint
   config [file]     Show redacted effective configuration
   version           Print core/api/plugin versions
   help              This message
@@ -141,6 +239,8 @@ Commands:
 Examples:
   fluxagent doctor
   fluxagent run "read the file notes.txt"
+  fluxagent skills
+  fluxagent sessions
   fluxagent config
 `);
 }
@@ -167,6 +267,25 @@ export function main(argv: readonly string[] = process.argv.slice(2)): void {
     case "models":
       printModels();
       return;
+    case "providers":
+      printProviders(flags.has("json"));
+      return;
+    case "skills":
+      printSkills(flags.has("json"));
+      return;
+    case "sessions":
+      printSessions(flags.has("json"));
+      return;
+    case "resume": {
+      const id = positional[0];
+      if (!id) {
+        console.error("error: usage: fluxagent resume <checkpoint-id>");
+        process.exitCode = 1;
+        return;
+      }
+      resumeSession(id, flags.has("json"));
+      return;
+    }
     case "config":
       printConfig(positional[0]);
       return;

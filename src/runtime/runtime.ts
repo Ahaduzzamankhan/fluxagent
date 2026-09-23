@@ -61,6 +61,9 @@ import { TraceRecorder } from "./trace.ts";
 import { CheckpointManager, InMemoryCheckpointStore, type CheckpointStore } from "./checkpoint.ts";
 import { attachEventBus } from "./trace.ts";
 import { SubagentManager } from "../agent/subagent.ts";
+// Phase 4/6 integrations
+import { SemanticMemoryService, InMemorySemanticStore } from "../memory/semantic.ts";
+import { SkillRegistry, builtinSkills } from "../skills/skill.ts";
 
 export interface RuntimeOptions {
   readonly config?: RuntimeConfig;
@@ -108,6 +111,15 @@ export interface FluxRuntime {
   readonly trace: TraceRecorder;
   readonly checkpointStore: CheckpointStore;
   createSession(options?: { goal?: string }): FluxSession;
+  // ── Phase 10–11 integration surface (key-free; safe for the API) ──────────
+  /** Registered model providers: identity + capability info, never secrets. */
+  listProviders(): readonly { id: string; kind: string; baseUrl?: string; hasApiKey: boolean; models: readonly string[] }[];
+  /** Skills with readiness against the current registry. */
+  listSkills(): readonly { name: string; description: string; version: string; requiredTools: readonly string[]; ready: boolean; missingTools: readonly string[] }[];
+  /** Semantic memory stats (counts by kind). */
+  semanticMemoryStats(): Promise<{ total: number; byKind: Record<string, number>; forgotten: number }>;
+  /** Semantic memory search for the API/memory tooling. */
+  semanticMemorySearch(query: string, limit?: number): Promise<readonly { id: string; kind: string; content: string; importance: number; provenance: { source: string; type: string } }[]>;
 }
 
 export function createRuntime(options: RuntimeOptions): FluxRuntime {
@@ -174,7 +186,12 @@ export function createRuntime(options: RuntimeOptions): FluxRuntime {
       ? new AutoApproveRequester()
       : options.approvalRequester ?? new AutoDenyApprovalRequester();
 
-  return {
+  // ── Phase 4/6/1 wiring: semantic memory, skills, provider registry ─────────
+  const semanticMemory = new SemanticMemoryService({ store: new InMemorySemanticStore() });
+  const skillRegistry = new SkillRegistry();
+  skillRegistry.registerAll(builtinSkills());
+
+  const runtime: FluxRuntime = {
     config,
     logger,
     bus,
@@ -356,7 +373,49 @@ export function createRuntime(options: RuntimeOptions): FluxRuntime {
         subagents: sessionSubagents,
       });
     },
+
+    listProviders() {
+      return runtime.modelRouter.listModels().map((m) => {
+        const desc = m as unknown as { id: string; provider?: string; baseUrl?: string; hasApiKey?: boolean; model?: string };
+        return {
+          id: desc.id,
+          kind: desc.provider ?? desc.id.split(":")[0] ?? "unknown",
+          ...(desc.baseUrl ? { baseUrl: desc.baseUrl } : {}),
+          hasApiKey: desc.hasApiKey ?? false,
+          models: [desc.model ?? desc.id],
+        };
+      });
+    },
+
+    listSkills() {
+      skillRegistry.setAvailableTools(registry.names());
+      return skillRegistry.list().map((s) => ({
+        name: s.name,
+        description: s.description,
+        version: s.version,
+        requiredTools: s.requiredTools,
+        ready: skillRegistry.isReady(s),
+        missingTools: skillRegistry.missingTools(s),
+      }));
+    },
+
+    async semanticMemoryStats() {
+      return semanticMemory.stats();
+    },
+
+    async semanticMemorySearch(query: string, limit = 10) {
+      const hits = await semanticMemory.retrieve({ query, limit });
+      return hits.map((r) => ({
+        id: r.id,
+        kind: r.kind,
+        content: r.content,
+        importance: r.importance,
+        provenance: { source: r.provenance.source, type: r.provenance.type },
+      }));
+    },
   };
+
+  return runtime;
 }
 
 function buildLongTermMemory(config: RuntimeConfig, cwd: string) {

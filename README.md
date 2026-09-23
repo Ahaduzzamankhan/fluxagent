@@ -1,7 +1,9 @@
 # FluxAgent
 
-Windows-first modular AI agent runtime — a real agent brain: goal → plan →
-tools → observation → verification → recovery → completion.
+Modular, provider-independent AI agent runtime — a real agent brain: goal →
+plan → tools → observation → verification → recovery → completion. Windows is
+the primary development platform today; the agent brain, tools, HTTP API, SDK,
+memory, skills, MCP, and evaluation layers are platform-independent.
 
 No dependencies are installed by design. Node 22+ (native TypeScript
 execution) and Python 3.11+ (stdlib worker) are the only requirements.
@@ -46,7 +48,6 @@ import { createRuntime, MockLlmProvider } from "fluxagent";
 
 const runtime = createRuntime({
   provider: new MockLlmProvider({ /* scripted plan/decisions for tests */ }),
-  // real providers plug into the same LlmProvider interface (todo: adapters)
 });
 
 const session = runtime.createSession({ goal: "Organize my downloads folder" });
@@ -61,6 +62,163 @@ Run tests (no network, no API keys):
 
 ```
 npm test
+```
+
+## Real model providers (BYOK) — implemented
+
+`src/llm/providers/` ships production BYOK adapters with **zero npm
+dependencies** (raw `node:http`/`node:https`):
+
+| Provider | Module | Notes |
+|---|---|---|
+| OpenAI-compatible | `providers/openai-compatible.ts` | Works with OpenAI, Azure-style gateways, OpenRouter, vLLM, LM Studio — any `/chat/completions` API. Streaming + tool calling + usage. |
+| Anthropic | `providers/anthropic.ts` | `/v1/messages` with `tool_use`/`tool_result` content blocks. Streaming + tool calling. |
+| Local | `providers/local.ts` | Ollama-style local servers; no API key required. |
+
+```ts
+import { OpenAiCompatibleProvider } from "./src/llm/providers/openai-compatible.ts";
+
+const provider = new OpenAiCompatibleProvider({
+  id: "openai-main",
+  baseUrl: "https://api.openai.com/v1",
+  apiKey: process.env.OPENAI_API_KEY!,   // key is never logged, never in errors
+  defaultModel: "gpt-4o",
+  timeoutMs: 30_000,
+});
+const runtime = createRuntime({ provider });
+```
+
+Provider errors are normalized into FluxAgent codes (`E_LLM_AUTH_FAILED`,
+`E_LLM_RATE_LIMITED` with retry-after, `E_LLM_TIMEOUT`, `E_LLM_NETWORK`,
+`E_LLM_CONTENT_POLICY`, …) with useful metadata and **no secret material**.
+
+## Native tool calling — implemented
+
+`src/agent/tool-calling.ts` drives the real model tool-use loop:
+
+```
+LLM → tool call → parse → schema validation → permission check →
+ToolRegistry.execute → structured result (size-capped) → observation → next turn
+```
+
+- Tool schemas derive from the registry (`toolInfos()`), so the model only
+  sees real tools with real JSON-schema argument contracts.
+- Unknown tools, malformed arguments, permission denials, and tool failures
+  become **structured tool results fed back to the model** — never thrown
+  away, never faked, never executed.
+- Turn budgets (`maxTurns`) and per-result size caps (`maxToolResultChars`)
+  prevent runaway loops and context flooding.
+
+## Computer use — implemented (backend-injected)
+
+`src/computer/computer.ts` composes the controllers into one capability
+facade. `ComputerController.capabilities()` reports honestly what is usable:
+
+- `filesystem`, `command`, `system` — fully available (sandbox-enforced).
+- `screen`, `input` — interface complete, backend pending (Python bridge or
+  native addon). Calls return structured `E_PLATFORM_UNSUPPORTED` errors.
+- `applications` — Windows today; other platforms get a capability error.
+
+## Persistent semantic memory — implemented
+
+`src/memory/semantic.ts` adds the memory pipeline over the layered store:
+
+```
+candidate → importance → deduplication (token overlap) → storage →
+retrieval (relevance × importance × usage) → context feed
+```
+
+- Kinds: facts, preferences, project knowledge, experiences, procedures.
+- Provenance is mandatory. Model-generated claims can never be stored as
+  `fact` — they are downgraded automatically.
+- `JsonFileSemanticStore` persists across restarts (`.fluxagent/memory/`).
+- Optional expiry; expired records never reach the context.
+
+## Permission grants & approvals — implemented
+
+`PermissionManager` now supports an explicit grant model on top of approvals:
+
+- `grant(tool, "once" | "session" | "tool", level, { expiresAt })` —
+  allow-once, allow-for-session (optionally time-boxed), always-allow.
+- `revoke(tool?)`, `activeGrants()`, and a bounded **audit trail**
+  (`auditTrail()`) recording every decision with the reason
+  (ceiling / auto-approve / grant / user / expired).
+- Grants never beat the session ceiling; the model has no path to elevation.
+- After a session resume, grants are **not** restored — sensitive actions
+  re-ask.
+
+## Skills — implemented
+
+`src/skills/skill.ts` defines reusable capabilities: required tools, model
+instructions, constraints, and an optional verification spec.
+
+- `SkillRegistry.selectForGoal(goal)` picks the best skill by keyword match;
+  skills whose required tools are missing report `missingTools` instead of
+  failing mid-run.
+- JSON skill files load from a directory (`loadSkillsFromDir`); invalid
+  files are reported, never fatal.
+- Built-ins: `coding`, `debugging`, `file-management`, `research`.
+- Skills guide the planner; they never bypass the registry or permissions.
+
+## Sessions: pause & resume — implemented
+
+`src/runtime/resume.ts` builds on checkpoints for crash-safe resumability:
+
+- `pause(sessionId, reason, state)` — user, approval-waiting, crash-recovery,
+  or resource-limit pauses are checkpointed.
+- `resume(checkpointId)` is **fail-closed**: corrupted shapes, missing fields,
+  version mismatches, and cross-session restores all throw structured
+  `E_CHECKPOINT_CORRUPT` errors — no partial restores.
+- CLI: `fluxagent sessions` lists checkpoints; `fluxagent resume <id>`.
+
+## MCP support — implemented (stdio)
+
+`src/mcp/mcp.ts` is a JSON-RPC 2.0 MCP client over stdio:
+
+- Connect/disconnect lifecycle, `initialize` handshake, `tools/list`
+  discovery, `tools/call` execution with timeouts.
+- Discovered tools register as **namespaced FluxAgent tools**
+  (`mcp.<server>.<tool>`) at `USER_CONFIRMATION` level — external code always
+  asks. MCP rides the same registry → permission → observation pipeline as
+  native tools; there is no bypass.
+- Server exits and protocol errors surface as structured
+  `E_MCP_DISCONNECT` errors.
+
+## Evaluation playground — implemented
+
+`tests/eval/playground.test.ts` + `src/eval/evaluation.ts` provide the
+case-runner and aggregate reporting:
+
+- Scenarios: read, write, tool-failure recovery, permission denial,
+  multi-step dependency chains — all through the real tool loop.
+- `reportFrom()` aggregates pass rate, per-category averages, tool-call and
+  model-call counts; `compareReports()` flags regressions against a baseline.
+- Deterministic: scripted providers only, no network, no keys.
+
+## HTTP API additions
+
+Alongside the Phase 8 routes, the API now exposes:
+
+```
+GET /api/v1/providers          provider identities (never key material)
+GET /api/v1/skills             skills + readiness + missing tools
+GET /api/v1/memory/semantic    memory stats + search (?q=…)
+GET /api/v1/permissions/:sid   ceiling, active grants, audit trail
+```
+
+## CLI
+
+```
+fluxagent run "<goal>"      Run one goal (mock provider; deterministic, offline)
+fluxagent doctor [--json]   Health diagnostics
+fluxagent tools             List registered tools
+fluxagent models            List routed model descriptors
+fluxagent providers [--json]  List providers (no secrets)
+fluxagent skills [--json]   List skills and readiness
+fluxagent sessions [--json] List saved checkpoints
+fluxagent resume <id>       Resume from a checkpoint (grants are NOT restored)
+fluxagent config [file]     Show redacted effective configuration
+fluxagent version           Core/API/plugin versions
 ```
 
 ## Layout
@@ -186,16 +344,17 @@ exercise-able without network access.
 
 ## Dependencies — intentionally not installed
 
-Per project rules, nothing is installed yet. Seams are ready:
+Per project rules, nothing is installed. All new Phase 1–9 subsystems were
+built **dependency-free** (raw `node:http`/`node:https`, `node:child_process`,
+JSON files). Remaining seams:
 
 | Capability | Future dependency | Status |
 |---|---|---|
-| Real LLM providers | `openai` / `@anthropic-ai/sdk` (or raw `node:https`) | `LlmProvider` interface + mock ready |
 | Screenshot capture | Python `mss`/`Pillow` via bridge, or native addon | `ScreenController` + backend seam; typed errors, no fakes |
 | Keyboard/mouse input | Python ctypes `SendInput`, or `@nut-tree/nut-js` | Backend seams; typed errors, no fakes |
 | OCR | Python `pytesseract` | worker module interface ready |
 | PDF/DOCX parsing | Python `PyMuPDF` / `python-docx` | worker module interface ready |
-| Semantic embeddings | Python `sentence-transformers` | hash fallback provided for plumbing |
+| Semantic embeddings | Python `sentence-transformers` | token-overlap retrieval provided (no vectors needed to start) |
 | Full JSON Schema | `ajv` (optional) | dependency-free subset implemented |
 | Vector memory | sqlite-vec / Qdrant / etc. | `VectorMemory` interface ready |
 
@@ -206,8 +365,15 @@ runtime never fakes results.
 
 - Four ordered permission levels; every tool declares one.
 - Session ceiling + auto-approve band + interactive approvals (UI seam ready).
-- Filesystem sandbox with allowed/denied roots (Windows-drive aware).
+- Explicit grants (once/session/tool, expiry) with audit trail; ceiling is
+  absolute — grants never bypass it and the model cannot self-elevate.
+- Filesystem sandbox with allowed/denied roots (Windows-drive aware);
+  path-traversal payloads are rejected.
 - Command policy blocklist; argument-array spawning (no shell string).
 - Destructive tools (`file.delete`, `process.terminate`, `app.close`) require
   `USER_CONFIRMATION`/`PRIVILEGED`.
-- Secrets are redacted in logs; env access is masked by default.
+- Secrets are redacted in logs; env access is masked by default; provider
+  errors never contain API keys.
+- Model output is untrusted: every tool call is schema-validated and
+  permission-checked; injected instructions in tool output gain nothing.
+- MCP tools are external code by definition — always `USER_CONFIRMATION`.
