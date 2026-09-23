@@ -331,6 +331,10 @@ export function main(argv: readonly string[] = process.argv.slice(2)): void {
   }
 }
 
-if (process.argv[1]?.replace(/\\/g, "/").endsWith("src/cli/index.ts")) {
+// Run as CLI when executed directly, OR when launched through any bin shim
+// (bin/fluxagent.mjs, bin/fluxagent.cmd, bin/fluxagent.ps1, npm link) — all
+// of which end up importing this module with "fluxagent" in the argv path.
+const argv1 = process.argv[1]?.replace(/\\/g, "/") ?? "";
+if (argv1.endsWith("src/cli/index.ts") || /bin[\\/]fluxagent\.(mjs|cmd|ps1)$/.test(argv1) || argv1.endsWith("fluxagent")) {
   main();
 }

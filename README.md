@@ -56,17 +56,44 @@ Observer            captures the real result
 
 ---
 
-## Quick start
+## Install
+
+One line, then use `fluxagent` from any terminal:
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/Ahaduzzamankhan/fluxagent/main/install.ps1 | iex
+```
+
+**Linux / macOS:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ahaduzzamankhan/fluxagent/main/install.sh | bash
+```
+
+The installer checks Node, downloads FluxAgent to `~/.fluxagent`, puts a
+`fluxagent` shim on your PATH, and verifies it works. Open a new terminal
+afterwards.
+
+Prefer git? That works too:
 
 ```bash
 git clone https://github.com/Ahaduzzamankhan/fluxagent.git
 cd fluxagent
+npm link          # creates the global `fluxagent` command
+```
 
-# no npm install needed — zero dependencies
+---
 
-node --experimental-strip-types src/cli/index.ts doctor    # health check
-node --experimental-strip-types src/cli/index.ts tools     # list available tools
-node --experimental-strip-types src/cli/index.ts run "read the file package.json and summarize it"
+## Quick start
+
+After install, every command is just `fluxagent <command>`:
+
+```bash
+fluxagent doctor    # health check
+fluxagent tools     # list available tools
+fluxagent run "read the file package.json and summarize it"
 ```
 
 ### Interactive chat mode
@@ -77,7 +104,7 @@ before anything sensitive:
 
 ```bash
 export OPENAI_API_KEY=sk-…        # or ANTHROPIC_API_KEY, or OLLAMA_HOST for local models
-node --experimental-strip-types src/cli/index.ts chat
+fluxagent chat
 
 › find the oldest file in this folder and tell me its name
 › fix the syntax error in src/utils/date.ts and run the tests
@@ -196,6 +223,8 @@ GET  /permissions/:sessionId   grants + audit trail
 
 ## CLI commands
 
+All plain `fluxagent <command>` after install:
+
 ```
 fluxagent chat              Interactive session with your own API key
 fluxagent run "<goal>"      Run one goal (mock provider; deterministic, offline)
@@ -203,6 +232,9 @@ fluxagent doctor [--json]   Health diagnostics
 fluxagent tools             List registered tools
 fluxagent providers         List providers (no secrets)
 fluxagent skills            List skills
+fluxagent sessions          List saved checkpoints
+fluxagent resume <id>       Resume from a checkpoint
+fluxagent config            Show redacted effective configuration
 fluxagent version           Version info
 ```
 
