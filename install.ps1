@@ -70,14 +70,6 @@ Say "Source installed at $AppDir"
 # ── 3. Shims ─────────────────────────────────────────────────────────────────
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
-$ps1Shim = Join-Path $BinDir "fluxagent.ps1"
-@"
-#!/usr/bin/env pwsh
-# FluxAgent CLI shim - forwards everything to the real CLI.
-& node --experimental-strip-types "$AppDir\src\cli\index.ts" @args
-exit $LASTEXITCODE
-"@ | Set-Content -Path $ps1Shim -Encoding UTF8
-
 $cmdShim = Join-Path $BinDir "fluxagent.cmd"
 @"
 @echo off
@@ -85,7 +77,14 @@ node --experimental-strip-types "$AppDir\src\cli\index.ts" %*
 exit /b %ERRORLEVEL%
 "@ | Set-Content -Path $cmdShim -Encoding ASCII
 
-Say "Shims created: $ps1Shim, $cmdShim"
+$ps1Shim = Join-Path $BinDir "fluxagent.ps1"
+@"
+# FluxAgent CLI shim - forwards everything to the real CLI.
+& node --experimental-strip-types "$AppDir\src\cli\index.ts" @args
+exit $LASTEXITCODE
+"@ | Set-Content -Path $ps1Shim -Encoding UTF8
+
+Say "Shims created: $cmdShim (primary), $ps1Shim"
 
 # ── 4. PATH ──────────────────────────────────────────────────────────────────
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -99,7 +98,9 @@ if ($userPath -notlike "*$BinDir*") {
 
 # ── 5. Verify ────────────────────────────────────────────────────────────────
 Say "Verifying installation..."
-$verify = & $ps1Shim version 2>&1
+# Verify via the .cmd shim (invoked the way a user's terminal will resolve
+# `fluxagent`): works regardless of PowerShell execution policy.
+$verify = & $cmdShim version 2>&1
 if ($LASTEXITCODE -eq 0) {
     Say "Install complete! Open a NEW terminal and run:"
     Write-Host ""
@@ -109,6 +110,23 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "Set a provider key first, e.g.:  " -NoNewline
     Write-Host "setx OPENAI_API_KEY sk-..." -ForegroundColor Yellow
     Write-Host "  (or ANTHROPIC_API_KEY, or OLLAMA_HOST=127.0.0.1:11434 for local models)"
+    Write-Host ""
+    # Warn about the two known conflicts:
+    #   1. npm link created a .ps1 shim that a Restricted execution policy blocks.
+    #   2. another fluxagent earlier on PATH shadows this install.
+    $npmPs1 = Join-Path (Split-Path (Join-Path $env:APPDATA "npm") -Parent) "AppData\Roaming\npm\fluxagent.ps1"
+    $npmShim = Join-Path $env:APPDATA "npm\fluxagent.ps1"
+    if (Test-Path $npmShim) {
+        Write-Host "NOTE: $npmShim exists (from 'npm link')." -ForegroundColor Yellow
+        Write-Host "If 'fluxagent' fails with a script-execution-policy error, remove that file:"
+        Write-Host "    Remove-Item \"$npmShim\"" -ForegroundColor Yellow
+        Write-Host "The .cmd shim installed here is not affected by execution policy."
+    }
+    $resolved = Get-Command fluxagent -ErrorAction SilentlyContinue
+    if ($resolved -and ($resolved.Source -notlike "$BinDir*")) {
+        Write-Host "NOTE: 'fluxagent' currently resolves to: $($resolved.Source)" -ForegroundColor Yellow
+        Write-Host "This install is at: $cmdShim"
+    }
 } else {
-    Die "verification failed. Run '$ps1Shim version' to see the error."
+    Die "verification failed. Run '$cmdShim version' to see the error."
 }
